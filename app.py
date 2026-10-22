@@ -32,7 +32,6 @@ def load_table(table_name, default_columns):
             for col in default_columns:
                 if col not in df.columns:
                     df[col] = ""
-            # Forçar colunas a 'object' para evitar TypeError do PyArrow em dados mistos
             return df.astype(object)
     except Exception:
         pass
@@ -40,23 +39,14 @@ def load_table(table_name, default_columns):
 
 def save_table(table_name, df):
     df_clean = df.copy()
-    
-    # Limpeza "a pente fino" célula a célula para garantir compatibilidade 100% com JSON
     for col in df_clean.columns:
         def clean_val(x):
-            # 1. Se for nulo nativo do Pandas/Numpy (inclui NaT e NaN)
             try:
                 if pd.isna(x): return ""
             except: pass
-            
-            # 2. Se for a representação em texto de um valor nulo
             if str(x) in ["NaT", "nan", "NaN", "None", "<NA>"]: return ""
-            
-            # 3. Se for uma data, converte obrigatoriamente para texto
             if isinstance(x, (date, pd.Timestamp)): return str(x)
-            
             return x
-            
         df_clean[col] = df_clean[col].apply(clean_val)
         
     data_json = df_clean.to_dict(orient="records")
@@ -252,13 +242,21 @@ def sync_financial_math(df):
             
     return df, changed
 
+# --- NOVA FUNÇÃO DE RECUPERAÇÃO SEGURA DO ÍNDICE ---
+def get_lead_index(project_id):
+    if st.session_state.leads_db.empty: return None
+    safe_ids = pd.to_numeric(st.session_state.leads_db["ID"], errors="coerce").fillna(0).astype(int)
+    matches = st.session_state.leads_db.index[safe_ids == int(project_id)]
+    return matches[0] if len(matches) > 0 else None
+
 def guardar_campo_projeto(project_id, column_name, widget_key, is_currency=False):
-    indice = st.session_state.leads_db.index[st.session_state.leads_db["ID"] == project_id][0]
-    valor = st.session_state[widget_key]
-    if is_currency: valor = parse_currency(valor)
-    st.session_state.leads_db.at[indice, column_name] = valor if valor is not None else ""
-    st.session_state.leads_db, _ = sync_financial_math(st.session_state.leads_db)
-    save_table("leads_db", st.session_state.leads_db)
+    indice = get_lead_index(project_id)
+    if indice is not None:
+        valor = st.session_state[widget_key]
+        if is_currency: valor = parse_currency(valor)
+        st.session_state.leads_db.at[indice, column_name] = valor if valor is not None else ""
+        st.session_state.leads_db, _ = sync_financial_math(st.session_state.leads_db)
+        save_table("leads_db", st.session_state.leads_db)
 
 def listar_nomes_arquitectos():
     if "architects_db" not in st.session_state: return []
@@ -383,7 +381,7 @@ with tab_captura:
         
         if st.form_submit_button("Criar Oportunidade"):
             if novo_cliente and novo_projeto:
-                novo_id = 1 if st.session_state.leads_db.empty else int(st.session_state.leads_db["ID"].max()) + 1
+                novo_id = 1 if st.session_state.leads_db.empty else int(pd.to_numeric(st.session_state.leads_db["ID"], errors="coerce").fillna(0).max()) + 1
                 nova_linha = {"ID": novo_id, "Cliente": novo_cliente, "Projeto": novo_projeto, COLUNA_ARQUITECTO: novo_arquitecto, "Fase": "⚪ Em Análise", "Valor Estimado": float(novo_valor), "Próximo Follow-up": date.today() + timedelta(days=1), "Notas": notas_iniciais}
                 st.session_state.leads_db = pd.concat([st.session_state.leads_db, pd.DataFrame([nova_linha])], ignore_index=True)
                 st.session_state.leads_db, _ = sync_financial_math(st.session_state.leads_db)
@@ -406,7 +404,7 @@ with tab_pipeline:
                 coluna.markdown(f"**{cabecalho}**")
 
         for indice, registo in st.session_state.leads_db.iterrows():
-            id_registo = int(registo["ID"])
+            id_registo = int(pd.to_numeric(registo.get("ID", 0), errors="coerce"))
             margem_linha = "-24px" if indice != st.session_state.leads_db.index[-1] else "0px"
             margem_superior_linha = "-24px" if indice == st.session_state.leads_db.index[0] else "0px"
             chave_linha = f"pipeline_row_{id_registo}"
@@ -493,11 +491,12 @@ with tab_pipeline:
             csv = st.session_state.leads_db.to_csv(index=False).encode("utf-8")
             st.download_button("Exportar Base de Dados (CSV)", data=csv, file_name="exportacao_leads_dottz.csv", mime="text/csv")
         with col2:
-            projetos_apagar = [""] + [f"{row['ID']} | Projeto: {row['Projeto']} | Cliente: {row['Cliente']}" for _, row in st.session_state.leads_db.iterrows()]
+            projetos_apagar = [""] + [f"{int(pd.to_numeric(row['ID'], errors='coerce'))} | Projeto: {row['Projeto']} | Cliente: {row['Cliente']}" for _, row in st.session_state.leads_db.iterrows()]
             lead_apagar = st.selectbox("Eliminar Registo de Projeto", projetos_apagar)
             if st.button("Eliminar Lead") and lead_apagar != "":
                 id_to_delete = int(lead_apagar.split(" | ")[0])
-                st.session_state.leads_db = st.session_state.leads_db[st.session_state.leads_db["ID"] != id_to_delete]
+                safe_ids = pd.to_numeric(st.session_state.leads_db["ID"], errors="coerce").fillna(0).astype(int)
+                st.session_state.leads_db = st.session_state.leads_db[safe_ids != id_to_delete].reset_index(drop=True)
                 st.session_state.leads_db, _ = sync_financial_math(st.session_state.leads_db)
                 save_table("leads_db", st.session_state.leads_db)
                 st.success("Registo do projeto eliminado com sucesso.")
@@ -509,80 +508,87 @@ with tab_pipeline:
 with tab_comunicacao:
     st.markdown("### Registar Interação e Orçamentos")
     if not st.session_state.leads_db.empty:
-        projeto_ids = st.session_state.leads_db["ID"].astype(int).tolist()
+        safe_ids_series = pd.to_numeric(st.session_state.leads_db["ID"], errors="coerce").fillna(0).astype(int)
+        projeto_ids = safe_ids_series.tolist()
         projeto_preselecionado = st.session_state.get("selected_project_id")
-        indice_projeto = projeto_ids.index(projeto_preselecionado) if projeto_preselecionado in projeto_ids else 0
-        nomes_projetos = {int(registo["ID"]): f"{registo['Projeto']} | {registo['Cliente']}" for _, registo in st.session_state.leads_db.iterrows()}
-        
+        try:
+            indice_projeto = projeto_ids.index(int(projeto_preselecionado)) if projeto_preselecionado is not None and int(projeto_preselecionado) in projeto_ids else 0
+        except:
+            indice_projeto = 0
+            
+        nomes_projetos = {int(safe_ids_series.iloc[i]): f"{row['Projeto']} | {row['Cliente']}" for i, row in enumerate(st.session_state.leads_db.to_dict('records'))}
         projeto_id = st.selectbox("Selecionar Projeto", projeto_ids, index=indice_projeto, key="interaction_project_id", format_func=nomes_projetos.get)
-        idx = st.session_state.leads_db.index[st.session_state.leads_db["ID"] == projeto_id][0]
-        projeto_selecionado = st.session_state.leads_db.at[idx, "Projeto"]
-        historico_atual = st.session_state.leads_db.at[idx, "Notas"]
+        
+        idx = get_lead_index(projeto_id)
+        
+        if idx is not None:
+            projeto_selecionado = st.session_state.leads_db.at[idx, "Projeto"]
+            historico_atual = st.session_state.leads_db.at[idx, "Notas"]
 
-        construtores = st.session_state.builders_db
-        empresas_disponiveis = sorted(construtores["Nome"].dropna().astype(str).str.strip().loc[lambda nomes: nomes != ""].unique().tolist()) if "Nome" in construtores.columns else []
+            construtores = st.session_state.builders_db
+            empresas_disponiveis = sorted(construtores["Nome"].dropna().astype(str).str.strip().loc[lambda nomes: nomes != ""].unique().tolist()) if "Nome" in construtores.columns else []
 
-        st.markdown(f"### Projeto: {projeto_selecionado}")
-        st.markdown("### Empresas de Construção")
-        id_projeto = int(st.session_state.leads_db.at[idx, "ID"])
-        for numero, (coluna_empresa, coluna_data, coluna_valor, coluna_follow, coluna_anexo) in enumerate(zip(EMPRESAS_CONSTRUCAO, DATAS_ORCAMENTO, VALORES_ORCAMENTO, FOLLOW_UPS_EMPRESA, ANEXOS_EMPRESA), start=1):
-            coluna_empresa_ui, coluna_data_ui, coluna_valor_ui, coluna_follow_ui, coluna_anexo_ui = st.columns([1.6, 1, 1.2, 1, 0.7])
-            empresa_atual = "" if pd.isna(st.session_state.leads_db.at[idx, coluna_empresa]) else str(st.session_state.leads_db.at[idx, coluna_empresa])
-            opcoes_empresa = [""] + empresas_disponiveis
-            with coluna_empresa_ui: st.selectbox(f"Empresa de Construção {numero}", opcoes_empresa, index=opcoes_empresa.index(empresa_atual) if empresa_atual in opcoes_empresa else 0, key=f"emp_{id_projeto}_{numero}", on_change=guardar_campo_projeto, args=(id_projeto, coluna_empresa, f"emp_{id_projeto}_{numero}"))
-            
-            data_atual = st.session_state.leads_db.at[idx, coluna_data]
-            data_atual = None if pd.isna(data_atual) or data_atual == "" else pd.to_datetime(data_atual).date()
-            with coluna_data_ui: st.date_input(f"Entrega {numero}", value=data_atual, key=f"dta_{id_projeto}_{numero}", on_change=guardar_campo_projeto, args=(id_projeto, coluna_data, f"dta_{id_projeto}_{numero}"))
-            
-            valor_atual = None if pd.isna(st.session_state.leads_db.at[idx, coluna_valor]) else float(st.session_state.leads_db.at[idx, coluna_valor])
-            with coluna_valor_ui: st.number_input(f"Valor {numero}", min_value=0.0, value=valor_atual, step=1000.0, format="%.0f", key=f"val_{id_projeto}_{numero}", on_change=guardar_campo_projeto, args=(id_projeto, coluna_valor, f"val_{id_projeto}_{numero}", True))
-            
-            follow_atual = st.session_state.leads_db.at[idx, coluna_follow]
-            follow_atual = None if pd.isna(follow_atual) or follow_atual == "" else pd.to_datetime(follow_atual).date()
-            with coluna_follow_ui: st.date_input(f"Follow up", value=follow_atual, key=f"fol_{id_projeto}_{numero}", on_change=guardar_campo_projeto, args=(id_projeto, coluna_follow, f"fol_{id_projeto}_{numero}"))
-            
-            with coluna_anexo_ui:
-                st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
-                anexo_atual = st.session_state.leads_db.at[idx, coluna_anexo]
-                if pd.notna(anexo_atual) and anexo_atual != "":
-                    ca1, ca2 = st.columns([1, 1])
-                    with ca1:
-                        try:
-                            res = supabase.storage.from_("anexos").download(anexo_atual)
-                            st.download_button("📥", res, file_name=anexo_atual, key=f"dl_emp_{id_projeto}_{numero}")
-                        except: pass
-                    with ca2:
-                        if st.button("❌", key=f"del_emp_{id_projeto}_{numero}"):
-                            try: supabase.storage.from_("anexos").remove([anexo_atual])
+            st.markdown(f"### Projeto: {projeto_selecionado}")
+            st.markdown("### Empresas de Construção")
+            id_projeto = int(pd.to_numeric(st.session_state.leads_db.at[idx, "ID"], errors="coerce"))
+            for numero, (coluna_empresa, coluna_data, coluna_valor, coluna_follow, coluna_anexo) in enumerate(zip(EMPRESAS_CONSTRUCAO, DATAS_ORCAMENTO, VALORES_ORCAMENTO, FOLLOW_UPS_EMPRESA, ANEXOS_EMPRESA), start=1):
+                coluna_empresa_ui, coluna_data_ui, coluna_valor_ui, coluna_follow_ui, coluna_anexo_ui = st.columns([1.6, 1, 1.2, 1, 0.7])
+                empresa_atual = "" if pd.isna(st.session_state.leads_db.at[idx, coluna_empresa]) else str(st.session_state.leads_db.at[idx, coluna_empresa])
+                opcoes_empresa = [""] + empresas_disponiveis
+                with coluna_empresa_ui: st.selectbox(f"Empresa de Construção {numero}", opcoes_empresa, index=opcoes_empresa.index(empresa_atual) if empresa_atual in opcoes_empresa else 0, key=f"emp_{id_projeto}_{numero}", on_change=guardar_campo_projeto, args=(id_projeto, coluna_empresa, f"emp_{id_projeto}_{numero}"))
+                
+                data_atual = st.session_state.leads_db.at[idx, coluna_data]
+                data_atual = None if pd.isna(data_atual) or data_atual == "" else pd.to_datetime(data_atual).date()
+                with coluna_data_ui: st.date_input(f"Entrega {numero}", value=data_atual, key=f"dta_{id_projeto}_{numero}", on_change=guardar_campo_projeto, args=(id_projeto, coluna_data, f"dta_{id_projeto}_{numero}"))
+                
+                valor_atual = None if pd.isna(st.session_state.leads_db.at[idx, coluna_valor]) else float(st.session_state.leads_db.at[idx, coluna_valor])
+                with coluna_valor_ui: st.number_input(f"Valor {numero}", min_value=0.0, value=valor_atual, step=1000.0, format="%.0f", key=f"val_{id_projeto}_{numero}", on_change=guardar_campo_projeto, args=(id_projeto, coluna_valor, f"val_{id_projeto}_{numero}", True))
+                
+                follow_atual = st.session_state.leads_db.at[idx, coluna_follow]
+                follow_atual = None if pd.isna(follow_atual) or follow_atual == "" else pd.to_datetime(follow_atual).date()
+                with coluna_follow_ui: st.date_input(f"Follow up", value=follow_atual, key=f"fol_{id_projeto}_{numero}", on_change=guardar_campo_projeto, args=(id_projeto, coluna_follow, f"fol_{id_projeto}_{numero}"))
+                
+                with coluna_anexo_ui:
+                    st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+                    anexo_atual = st.session_state.leads_db.at[idx, coluna_anexo]
+                    if pd.notna(anexo_atual) and anexo_atual != "":
+                        ca1, ca2 = st.columns([1, 1])
+                        with ca1:
+                            try:
+                                res = supabase.storage.from_("anexos").download(anexo_atual)
+                                st.download_button("📥", res, file_name=anexo_atual, key=f"dl_emp_{id_projeto}_{numero}")
                             except: pass
-                            st.session_state.leads_db.at[idx, coluna_anexo] = ""
-                            save_table("leads_db", st.session_state.leads_db)
-                            st.rerun()
-                else:
-                    upl = st.file_uploader(f"Anexar a Empresa {numero}", key=f"upl_emp_{id_projeto}_{numero}", label_visibility="collapsed")
-                    if upl:
-                        path = save_uploaded_file(upl, f"emp{numero}_{id_projeto}")
-                        if path is not None:
-                            st.session_state.leads_db.at[idx, coluna_anexo] = path
-                            save_table("leads_db", st.session_state.leads_db)
-                            st.rerun()
-        
-        if pd.isna(historico_atual) or str(historico_atual).strip() == "": historico_atual = "Sem interações anteriores."
-        with st.expander("Ver Histórico Atual deste Projeto", expanded=True): st.text(historico_atual)
-        
-        with st.form("form_interacao", clear_on_submit=True):
-            data_interacao = st.date_input("Data da Interação", date.today())
-            tipo = st.selectbox("Tipo de Comunicação", ["Email", "Chamada", "Reunião Presencial", "Teams/Zoom", "WhatsApp"])
-            resumo = st.text_area("Resumo da Conversa")
-            novo_follow_up = st.date_input("Agendar Próximo Follow-up Global", date.today() + timedelta(days=3))
-            if st.form_submit_button("Registar Interação"):
-                historico_limpo = historico_atual if historico_atual != 'Sem interações anteriores.' else ''
-                st.session_state.leads_db.at[idx, "Notas"] = f"[{data_interacao.strftime('%d/%m/%Y')} {tipo}]: {resumo}\n{historico_limpo}"
-                st.session_state.leads_db.at[idx, "Próximo Follow-up"] = novo_follow_up
-                save_table("leads_db", st.session_state.leads_db)
-                st.success("Interação registada com sucesso!")
-                st.rerun() 
+                        with ca2:
+                            if st.button("❌", key=f"del_emp_{id_projeto}_{numero}"):
+                                try: supabase.storage.from_("anexos").remove([anexo_atual])
+                                except: pass
+                                st.session_state.leads_db.at[idx, coluna_anexo] = ""
+                                save_table("leads_db", st.session_state.leads_db)
+                                st.rerun()
+                    else:
+                        upl = st.file_uploader(f"Anexar a Empresa {numero}", key=f"upl_emp_{id_projeto}_{numero}", label_visibility="collapsed")
+                        if upl:
+                            path = save_uploaded_file(upl, f"emp{numero}_{id_projeto}")
+                            if path is not None:
+                                st.session_state.leads_db.at[idx, coluna_anexo] = path
+                                save_table("leads_db", st.session_state.leads_db)
+                                st.rerun()
+            
+            if pd.isna(historico_atual) or str(historico_atual).strip() == "": historico_atual = "Sem interações anteriores."
+            with st.expander("Ver Histórico Atual deste Projeto", expanded=True): st.text(historico_atual)
+            
+            with st.form("form_interacao", clear_on_submit=True):
+                data_interacao = st.date_input("Data da Interação", date.today())
+                tipo = st.selectbox("Tipo de Comunicação", ["Email", "Chamada", "Reunião Presencial", "Teams/Zoom", "WhatsApp"])
+                resumo = st.text_area("Resumo da Conversa")
+                novo_follow_up = st.date_input("Agendar Próximo Follow-up Global", date.today() + timedelta(days=3))
+                if st.form_submit_button("Registar Interação"):
+                    historico_limpo = historico_atual if historico_atual != 'Sem interações anteriores.' else ''
+                    st.session_state.leads_db.at[idx, "Notas"] = f"[{data_interacao.strftime('%d/%m/%Y')} {tipo}]: {resumo}\n{historico_limpo}"
+                    st.session_state.leads_db.at[idx, "Próximo Follow-up"] = novo_follow_up
+                    save_table("leads_db", st.session_state.leads_db)
+                    st.success("Interação registada com sucesso!")
+                    st.rerun() 
     else:
         st.info("Ainda não existem leads no sistema.")
 
