@@ -49,7 +49,7 @@ def save_table(table_name, df):
     except Exception as e:
         st.error(f"Erro de gravação na nuvem: {e}")
 
-# --- FUNÇÕES DE STORAGE (ANEXOS) NA NUVEM ---
+# --- FUNÇÕES DE STORAGE (ANEXOS) NA NUVEM PROTEGIDAS ---
 def save_uploaded_file(uploaded_file, prefix):
     if uploaded_file is not None:
         safe_name = "".join([c for c in uploaded_file.name if c.isalpha() or c.isdigit() or c in (' ', '.', '_', '-')]).rstrip()
@@ -58,7 +58,8 @@ def save_uploaded_file(uploaded_file, prefix):
         try:
             supabase.storage.from_("anexos").upload(file_path, file_bytes, {"upsert": "true"})
             return file_path
-        except Exception:
+        except Exception as e:
+            st.error("🚨 Erro: O Supabase rejeitou o anexo. Confirma se criaste o bucket 'anexos' (em minúsculas) e se está 'Public'.")
             return None
     return None
 
@@ -197,6 +198,14 @@ def parse_currency(val):
 def sync_financial_math(df):
     changed = False
     if df.empty: return df, changed
+    
+    # --- CORREÇÃO DO ERRO DE TYPE (PYARROW) ---
+    colunas_matematicas = ["Valor Estimado", "% DBS", "Valor da % DBS", "% Inter", "Valor da % Inter"]
+    for col in colunas_matematicas:
+        if col in df.columns:
+            df[col] = df[col].astype(object)
+    # ------------------------------------------
+
     if "Inter" in df.columns:
         old_inter = df["Inter"].astype(str).copy()
         df["Inter"] = df["Inter"].fillna("").astype(str).replace(["nan", "None", "<NA>", "NaN"], "")
@@ -437,9 +446,10 @@ with tab_pipeline:
                         upl = st.file_uploader("Anexo", key=f"upl_proj_{id_registo}", label_visibility="collapsed")
                         if upl:
                             path = save_uploaded_file(upl, f"proj_{id_registo}")
-                            st.session_state.leads_db.at[indice, COLUNA_ANEXO_PROJETO] = path
-                            save_table("leads_db", st.session_state.leads_db)
-                            st.rerun()
+                            if path is not None:
+                                st.session_state.leads_db.at[indice, COLUNA_ANEXO_PROJETO] = path
+                                save_table("leads_db", st.session_state.leads_db)
+                                st.rerun()
 
             if nova_fase != registo["Fase"]:
                 st.session_state.leads_db.at[indice, "Fase"] = nova_fase
@@ -531,12 +541,13 @@ with tab_comunicacao:
                             save_table("leads_db", st.session_state.leads_db)
                             st.rerun()
                 else:
-                    upl = st.file_uploader(f"Anexo {numero}", key=f"upl_emp_{id_projeto}_{numero}", label_visibility="collapsed")
+                    upl = st.file_uploader(f"Anexar a Empresa {numero}", key=f"upl_emp_{id_projeto}_{numero}", label_visibility="collapsed")
                     if upl:
                         path = save_uploaded_file(upl, f"emp{numero}_{id_projeto}")
-                        st.session_state.leads_db.at[idx, coluna_anexo] = path
-                        save_table("leads_db", st.session_state.leads_db)
-                        st.rerun()
+                        if path is not None:
+                            st.session_state.leads_db.at[idx, coluna_anexo] = path
+                            save_table("leads_db", st.session_state.leads_db)
+                            st.rerun()
         
         if pd.isna(historico_atual) or str(historico_atual).strip() == "": historico_atual = "Sem interações anteriores."
         with st.expander("Ver Histórico Atual deste Projeto", expanded=True): st.text(historico_atual)
