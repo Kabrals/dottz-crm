@@ -32,17 +32,33 @@ def load_table(table_name, default_columns):
             for col in default_columns:
                 if col not in df.columns:
                     df[col] = ""
-            return df
+            # Forçar colunas a 'object' para evitar TypeError do PyArrow em dados mistos
+            return df.astype(object)
     except Exception:
         pass
-    return pd.DataFrame(columns=default_columns)
+    return pd.DataFrame(columns=default_columns).astype(object)
 
 def save_table(table_name, df):
     df_clean = df.copy()
-    df_clean = df_clean.replace({np.nan: "", pd.NaT: ""})
+    
+    # Limpeza "a pente fino" célula a célula para garantir compatibilidade 100% com JSON
     for col in df_clean.columns:
-        if df_clean[col].dtype == 'datetime64[ns]' or df_clean[col].dtype.name == 'object':
-            df_clean[col] = df_clean[col].astype(str).replace({"nan": "", "None": "", "NaT": ""})
+        def clean_val(x):
+            # 1. Se for nulo nativo do Pandas/Numpy (inclui NaT e NaN)
+            try:
+                if pd.isna(x): return ""
+            except: pass
+            
+            # 2. Se for a representação em texto de um valor nulo
+            if str(x) in ["NaT", "nan", "NaN", "None", "<NA>"]: return ""
+            
+            # 3. Se for uma data, converte obrigatoriamente para texto
+            if isinstance(x, (date, pd.Timestamp)): return str(x)
+            
+            return x
+            
+        df_clean[col] = df_clean[col].apply(clean_val)
+        
     data_json = df_clean.to_dict(orient="records")
     try:
         supabase.table("crm_data").upsert({"table_name": table_name, "data": data_json}).execute()
@@ -199,17 +215,16 @@ def sync_financial_math(df):
     changed = False
     if df.empty: return df, changed
     
-    # --- CORREÇÃO DO ERRO DE TYPE (PYARROW) ---
     colunas_matematicas = ["Valor Estimado", "% DBS", "Valor da % DBS", "% Inter", "Valor da % Inter"]
     for col in colunas_matematicas:
         if col in df.columns:
-            df[col] = df[col].astype(object)
-    # ------------------------------------------
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0).astype(float)
 
     if "Inter" in df.columns:
         old_inter = df["Inter"].astype(str).copy()
         df["Inter"] = df["Inter"].fillna("").astype(str).replace(["nan", "None", "<NA>", "NaN"], "")
         if not df["Inter"].astype(str).equals(old_inter): changed = True
+        
     for idx in df.index:
         if "Valor Estimado" not in df.columns: continue
         v_est = parse_currency(df.at[idx, "Valor Estimado"])
@@ -217,20 +232,24 @@ def sync_financial_math(df):
         p_int = pd.to_numeric(df.at[idx, "% Inter"], errors="coerce") if "% Inter" in df.columns else 0.0
         if pd.isna(p_dbs): p_dbs = 0.0
         if pd.isna(p_int): p_int = 0.0
+        
         calc_dbs = v_est * (p_dbs / 100.0)
         calc_int = v_est * (p_int / 100.0)
         
         if df.at[idx, "Valor Estimado"] != v_est: df.at[idx, "Valor Estimado"] = v_est; changed = True
         if "% DBS" in df.columns and df.at[idx, "% DBS"] != p_dbs: df.at[idx, "% DBS"] = p_dbs; changed = True
         if "% Inter" in df.columns and df.at[idx, "% Inter"] != p_int: df.at[idx, "% Inter"] = p_int; changed = True
+            
         if "Valor da % DBS" in df.columns:
             atual_dbs = pd.to_numeric(df.at[idx, "Valor da % DBS"], errors="coerce")
             if pd.isna(atual_dbs): atual_dbs = 0.0
             if round(calc_dbs, 2) != round(atual_dbs, 2): df.at[idx, "Valor da % DBS"] = calc_dbs; changed = True
+                
         if "Valor da % Inter" in df.columns:
             atual_int = pd.to_numeric(df.at[idx, "Valor da % Inter"], errors="coerce")
             if pd.isna(atual_int): atual_int = 0.0
             if round(calc_int, 2) != round(atual_int, 2): df.at[idx, "Valor da % Inter"] = calc_int; changed = True
+            
     return df, changed
 
 def guardar_campo_projeto(project_id, column_name, widget_key, is_currency=False):
