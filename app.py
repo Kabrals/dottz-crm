@@ -282,20 +282,36 @@ if "Fase" in st.session_state.leads_db.columns:
 st.session_state.leads_db, leads_changed = sync_financial_math(st.session_state.leads_db)
 if leads_changed: save_table("leads_db", st.session_state.leads_db)
 
-cols_tct_base = ["Cliente", "Projeto", "Fase", "Valor Estimado", "% DBS", "Valor da % DBS", "Inter", "% Inter", "Valor da % Inter"]
+cols_tct_base = ["ID", "Cliente", "Projeto", "Fase", "Valor Estimado", "% DBS", "Valor da % DBS", "Inter", "% Inter", "Valor da % Inter"]
+
 if "tct_db" not in st.session_state:
     df_tct, changed_tct = sync_financial_math(load_table("tct_db", cols_tct_base))
-    if changed_tct: save_table("tct_db", df_tct)
+    needs_save = changed_tct
+    for i, row in df_tct.iterrows():
+        if pd.isna(row.get("ID")) or str(row.get("ID")).strip() == "":
+            df_tct.at[i, "ID"] = i + 1
+            needs_save = True
+    if needs_save: save_table("tct_db", df_tct)
     st.session_state.tct_db = df_tct
 
 if "alca_db" not in st.session_state:
     df_alca, changed_alca = sync_financial_math(load_table("alca_db", cols_tct_base))
-    if changed_alca: save_table("alca_db", df_alca)
+    needs_save = changed_alca
+    for i, row in df_alca.iterrows():
+        if pd.isna(row.get("ID")) or str(row.get("ID")).strip() == "":
+            df_alca.at[i, "ID"] = i + 1
+            needs_save = True
+    if needs_save: save_table("alca_db", df_alca)
     st.session_state.alca_db = df_alca
 
 if "famo_db" not in st.session_state:
     df_famo, changed_famo = sync_financial_math(load_table("famo_db", cols_tct_base))
-    if changed_famo: save_table("famo_db", df_famo)
+    needs_save = changed_famo
+    for i, row in df_famo.iterrows():
+        if pd.isna(row.get("ID")) or str(row.get("ID")).strip() == "":
+            df_famo.at[i, "ID"] = i + 1
+            needs_save = True
+    if needs_save: save_table("famo_db", df_famo)
     st.session_state.famo_db = df_famo
 
 cols_arq_texto = ["Nome", "Responsável", "Telefone", "Email", "Distrito"]
@@ -738,42 +754,126 @@ with tab_tct:
     st.markdown("### Gestão TCT")
     edited_tct = st.data_editor(
         st.session_state.tct_db,
-        column_config={ "Fase": st.column_config.SelectboxColumn("Fase", options=FASES_ATUAIS), "Valor Estimado": st.column_config.NumberColumn("Valor Estimado", format="%.0f €", step=1000.0), "% DBS": st.column_config.NumberColumn("% DBS", format="%.2f %%"), "Valor da % DBS": st.column_config.NumberColumn("Valor da % DBS", format="%.0f €", disabled=True), "Inter": st.column_config.TextColumn("Inter"), "% Inter": st.column_config.NumberColumn("% Inter", format="%.2f %%"), "Valor da % Inter": st.column_config.NumberColumn("Valor da % Inter", format="%.0f €", disabled=True) },
+        column_config={
+            "ID": st.column_config.NumberColumn("ID", disabled=True),
+            "Fase": st.column_config.SelectboxColumn("Fase", options=FASES_ATUAIS),
+            "Valor Estimado": st.column_config.NumberColumn("Valor Estimado", format="%.0f €", step=1000.0),
+            "% DBS": st.column_config.NumberColumn("% DBS", format="%.2f %%"),
+            "Valor da % DBS": st.column_config.NumberColumn("Valor da % DBS", format="%.0f €", disabled=True),
+            "Inter": st.column_config.TextColumn("Inter"),
+            "% Inter": st.column_config.NumberColumn("% Inter", format="%.2f %%"),
+            "Valor da % Inter": st.column_config.NumberColumn("Valor da % Inter", format="%.0f €", disabled=True)
+        },
         use_container_width=True, hide_index=True, num_rows="dynamic", key="tct_editor"
     )
     if not edited_tct.equals(st.session_state.tct_db):
+        max_id = int(pd.to_numeric(st.session_state.tct_db["ID"], errors="coerce").fillna(0).max())
+        for idx in edited_tct.index:
+            if pd.isna(edited_tct.at[idx, "ID"]) or str(edited_tct.at[idx, "ID"]).strip() == "":
+                max_id += 1
+                edited_tct.at[idx, "ID"] = max_id
         st.session_state.tct_db = edited_tct
         st.session_state.tct_db, _ = sync_financial_math(st.session_state.tct_db)
         save_table("tct_db", st.session_state.tct_db)
         st.rerun()
+
+    st.markdown("---")
+    st.markdown("### Resumo de Projetos")
+    c1, c2, c3, c4 = st.columns(4)
+    tot_proj_tct = len(edited_tct)
+    adj_tct = edited_tct[edited_tct["Fase"] == "🟢 Adjudicado"]
+    tot_adj_tct = len(adj_tct)
+    val_tot_tct = edited_tct["Valor Estimado"].apply(parse_currency).sum()
+    val_dbs_adj_tct = pd.to_numeric(adj_tct["Valor da % DBS"], errors='coerce').fillna(0.0).sum()
+    
+    c1.metric("Total de Projetos", tot_proj_tct)
+    c2.metric("Projetos Adjudicados", tot_adj_tct)
+    c3.metric("Valor Total Estimado", f"{int(val_tot_tct):,} €".replace(",", " "))
+    c4.metric("Valor % DBS Adjudicado", f"{int(val_dbs_adj_tct):,} €".replace(",", " "))
 
 # --- 7. ALCA ---
 with tab_alca:
     st.markdown("### Gestão ALCA")
     edited_alca = st.data_editor(
         st.session_state.alca_db,
-        column_config={ "Fase": st.column_config.SelectboxColumn("Fase", options=FASES_ATUAIS), "Valor Estimado": st.column_config.NumberColumn("Valor Estimado", format="%.0f €", step=1000.0), "% DBS": st.column_config.NumberColumn("% DBS", format="%.2f %%"), "Valor da % DBS": st.column_config.NumberColumn("Valor da % DBS", format="%.0f €", disabled=True), "Inter": st.column_config.TextColumn("Inter"), "% Inter": st.column_config.NumberColumn("% Inter", format="%.2f %%"), "Valor da % Inter": st.column_config.NumberColumn("Valor da % Inter", format="%.0f €", disabled=True) },
+        column_config={
+            "ID": st.column_config.NumberColumn("ID", disabled=True),
+            "Fase": st.column_config.SelectboxColumn("Fase", options=FASES_ATUAIS),
+            "Valor Estimado": st.column_config.NumberColumn("Valor Estimado", format="%.0f €", step=1000.0),
+            "% DBS": st.column_config.NumberColumn("% DBS", format="%.2f %%"),
+            "Valor da % DBS": st.column_config.NumberColumn("Valor da % DBS", format="%.0f €", disabled=True),
+            "Inter": st.column_config.TextColumn("Inter"),
+            "% Inter": st.column_config.NumberColumn("% Inter", format="%.2f %%"),
+            "Valor da % Inter": st.column_config.NumberColumn("Valor da % Inter", format="%.0f €", disabled=True)
+        },
         use_container_width=True, hide_index=True, num_rows="dynamic", key="alca_editor"
     )
     if not edited_alca.equals(st.session_state.alca_db):
+        max_id = int(pd.to_numeric(st.session_state.alca_db["ID"], errors="coerce").fillna(0).max())
+        for idx in edited_alca.index:
+            if pd.isna(edited_alca.at[idx, "ID"]) or str(edited_alca.at[idx, "ID"]).strip() == "":
+                max_id += 1
+                edited_alca.at[idx, "ID"] = max_id
         st.session_state.alca_db = edited_alca
         st.session_state.alca_db, _ = sync_financial_math(st.session_state.alca_db)
         save_table("alca_db", st.session_state.alca_db)
         st.rerun()
+
+    st.markdown("---")
+    st.markdown("### Resumo de Projetos")
+    c1, c2, c3, c4 = st.columns(4)
+    tot_proj_alca = len(edited_alca)
+    adj_alca = edited_alca[edited_alca["Fase"] == "🟢 Adjudicado"]
+    tot_adj_alca = len(adj_alca)
+    val_tot_alca = edited_alca["Valor Estimado"].apply(parse_currency).sum()
+    val_dbs_adj_alca = pd.to_numeric(adj_alca["Valor da % DBS"], errors='coerce').fillna(0.0).sum()
+    
+    c1.metric("Total de Projetos", tot_proj_alca)
+    c2.metric("Projetos Adjudicados", tot_adj_alca)
+    c3.metric("Valor Total Estimado", f"{int(val_tot_alca):,} €".replace(",", " "))
+    c4.metric("Valor % DBS Adjudicado", f"{int(val_dbs_adj_alca):,} €".replace(",", " "))
 
 # --- 8. FAMO ---
 with tab_famo:
     st.markdown("### Gestão FAMO")
     edited_famo = st.data_editor(
         st.session_state.famo_db,
-        column_config={ "Fase": st.column_config.SelectboxColumn("Fase", options=FASES_ATUAIS), "Valor Estimado": st.column_config.NumberColumn("Valor Estimado", format="%.0f €", step=1000.0), "% DBS": st.column_config.NumberColumn("% DBS", format="%.2f %%"), "Valor da % DBS": st.column_config.NumberColumn("Valor da % DBS", format="%.0f €", disabled=True), "Inter": st.column_config.TextColumn("Inter"), "% Inter": st.column_config.NumberColumn("% Inter", format="%.2f %%"), "Valor da % Inter": st.column_config.NumberColumn("Valor da % Inter", format="%.0f €", disabled=True) },
+        column_config={
+            "ID": st.column_config.NumberColumn("ID", disabled=True),
+            "Fase": st.column_config.SelectboxColumn("Fase", options=FASES_ATUAIS),
+            "Valor Estimado": st.column_config.NumberColumn("Valor Estimado", format="%.0f €", step=1000.0),
+            "% DBS": st.column_config.NumberColumn("% DBS", format="%.2f %%"),
+            "Valor da % DBS": st.column_config.NumberColumn("Valor da % DBS", format="%.0f €", disabled=True),
+            "Inter": st.column_config.TextColumn("Inter"),
+            "% Inter": st.column_config.NumberColumn("% Inter", format="%.2f %%"),
+            "Valor da % Inter": st.column_config.NumberColumn("Valor da % Inter", format="%.0f €", disabled=True)
+        },
         use_container_width=True, hide_index=True, num_rows="dynamic", key="famo_editor"
     )
     if not edited_famo.equals(st.session_state.famo_db):
+        max_id = int(pd.to_numeric(st.session_state.famo_db["ID"], errors="coerce").fillna(0).max())
+        for idx in edited_famo.index:
+            if pd.isna(edited_famo.at[idx, "ID"]) or str(edited_famo.at[idx, "ID"]).strip() == "":
+                max_id += 1
+                edited_famo.at[idx, "ID"] = max_id
         st.session_state.famo_db = edited_famo
         st.session_state.famo_db, _ = sync_financial_math(st.session_state.famo_db)
         save_table("famo_db", st.session_state.famo_db)
         st.rerun()
+
+    st.markdown("---")
+    st.markdown("### Resumo de Projetos")
+    c1, c2, c3, c4 = st.columns(4)
+    tot_proj_famo = len(edited_famo)
+    adj_famo = edited_famo[edited_famo["Fase"] == "🟢 Adjudicado"]
+    tot_adj_famo = len(adj_famo)
+    val_tot_famo = edited_famo["Valor Estimado"].apply(parse_currency).sum()
+    val_dbs_adj_famo = pd.to_numeric(adj_famo["Valor da % DBS"], errors='coerce').fillna(0.0).sum()
+    
+    c1.metric("Total de Projetos", tot_proj_famo)
+    c2.metric("Projetos Adjudicados", tot_adj_famo)
+    c3.metric("Valor Total Estimado", f"{int(val_tot_famo):,} €".replace(",", " "))
+    c4.metric("Valor % DBS Adjudicado", f"{int(val_dbs_adj_famo):,} €".replace(",", " "))
 
 # --- 9. CALENDÁRIO ---
 with tab_calendario:
