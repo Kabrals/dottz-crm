@@ -32,6 +32,12 @@ def load_table(table_name, default_columns):
             for col in default_columns:
                 if col not in df.columns:
                     df[col] = ""
+            
+            # Força a ordem exata das colunas independentemente do formato JSON
+            ordered_cols = [c for c in default_columns if c in df.columns]
+            extra_cols = [c for c in df.columns if c not in default_columns]
+            df = df[ordered_cols + extra_cols]
+            
             return df.astype(object)
     except Exception:
         pass
@@ -334,8 +340,9 @@ if "builders_db" not in st.session_state:
     for col in cols_const_bool: df_build[col] = df_build[col].replace({"Sim": "🟢 Sim", "Não": "🔴 Não", "": "🔴 Não"}).fillna("🔴 Não").apply(lambda x: x if x in OPCOES_SIM_NAO else "🔴 Não")
     st.session_state.builders_db = df_build
 
+cols_todo_todas = ["Tarefa", "Próximos passos", "Follow up"]
 if "todo_db" not in st.session_state:
-    df_todo = load_table("todo_db", ["Tarefa", "Próximos passos", "Follow up"])
+    df_todo = load_table("todo_db", cols_todo_todas)
     if "Follow up" in df_todo.columns: df_todo["Follow up"] = pd.to_datetime(df_todo["Follow up"], errors="coerce").dt.date
     st.session_state.todo_db = df_todo
 
@@ -357,8 +364,9 @@ if "installments_db" not in st.session_state:
     df_inst.loc[mask_z, "Valor com IVA (€)"] = df_inst.loc[mask_z, "Mensalidade (€)"] * (1 + df_inst.loc[mask_z, "IVA (%)"]/100.0)
     st.session_state.installments_db = df_inst
 
+cols_kpi = ["Métricas Globais", "Valor Atual", "KPIS 2027", "Objetivo"]
 if "kpi_db" not in st.session_state:
-    df_kpi = load_table("kpi_db", ["Métricas Globais", "Valor Atual", "KPIS 2027", "Objetivo"])
+    df_kpi = load_table("kpi_db", cols_kpi)
     if df_kpi.empty:
         df_kpi = pd.DataFrame({
             "Métricas Globais": ["Total de Parcerias com Arquitectos", "Total de Parcerias com Construtores", "Total de Projectos", "Total de Projectos Adjudicados", "Total de Valor Adjudicado (€)", "Total de Valor da % DBS (€)", "% de Valor (Adjudicado / Estimado) (%)"],
@@ -493,7 +501,7 @@ with tab_pipeline:
             colunas_protegidas = ["ID", "Cliente", "Projeto", COLUNA_ARQUITECTO, "Fase", "Próximo Follow-up", COLUNA_ANEXO_PROJETO, *EMPRESAS_CONSTRUCAO, *DATAS_ORCAMENTO, *VALORES_ORCAMENTO, *FOLLOW_UPS_EMPRESA, *ANEXOS_EMPRESA, "% DBS", "Valor da % DBS", "Inter", "% Inter", "Valor da % Inter"]
             col_cfg_exp = {col: None for col in colunas_protegidas}
             col_cfg_exp["Valor Estimado"] = st.column_config.NumberColumn("Valor Estimado", format="%.0f €", step=1000.0)
-            edited_df = st.data_editor(st.session_state.leads_db, column_config=col_cfg_exp, use_container_width=True, hide_index=True, num_rows="fixed")
+            edited_df = st.data_editor(st.session_state.leads_db, column_order=cols_leads, column_config=col_cfg_exp, use_container_width=True, hide_index=True, num_rows="fixed")
             if not edited_df.equals(st.session_state.leads_db):
                 st.session_state.leads_db = edited_df
                 st.session_state.leads_db, _ = sync_financial_math(st.session_state.leads_db)
@@ -643,6 +651,7 @@ with tab_arquitectos:
 
     edited_arq = st.data_editor(
         df_arq_view,
+        column_order=cols_arq_todas,
         column_config={
             "Nome": st.column_config.TextColumn("Nome", required=True), "Responsável": st.column_config.TextColumn("Responsável"), "Telefone": st.column_config.TextColumn("Telefone"), "Email": st.column_config.TextColumn("Email"), "Distrito": st.column_config.TextColumn("Distrito"),
             "Contactado": st.column_config.SelectboxColumn("Contactado", options=OPCOES_SIM_NAO, default="🔴 Não"), "Reunião": st.column_config.SelectboxColumn("Reunião", options=OPCOES_SIM_NAO, default="🔴 Não"), "Interessado": st.column_config.SelectboxColumn("Interessado", options=OPCOES_SIM_NAO, default="🔴 Não"), "Parceria": st.column_config.SelectboxColumn("Parceria", options=OPCOES_SIM_NAO, default="🔴 Não"),
@@ -714,6 +723,7 @@ with tab_construtores:
 
     edited_con = st.data_editor(
         df_con_view,
+        column_order=cols_const_todas,
         column_config={
             "Nome": st.column_config.TextColumn("Nome", required=True), "Alvará": st.column_config.TextColumn("Alvará"), "Distrito": st.column_config.TextColumn("Distrito"), "Responsável": st.column_config.TextColumn("Responsável"), "Função": st.column_config.TextColumn("Função"), "Telefone": st.column_config.TextColumn("Telefone"), "Email": st.column_config.TextColumn("Email"),
             "Contactado": st.column_config.SelectboxColumn("Contactado", options=OPCOES_SIM_NAO, default="🔴 Não"), "Reunião": st.column_config.SelectboxColumn("Reunião", options=OPCOES_SIM_NAO, default="🔴 Não"), "Parceria": st.column_config.SelectboxColumn("Parceria", options=OPCOES_SIM_NAO, default="🔴 Não"),
@@ -754,6 +764,7 @@ with tab_tct:
     st.markdown("### Gestão TCT")
     edited_tct = st.data_editor(
         st.session_state.tct_db,
+        column_order=cols_tct_base,
         column_config={
             "ID": st.column_config.NumberColumn("ID", disabled=True),
             "Fase": st.column_config.SelectboxColumn("Fase", options=FASES_ATUAIS),
@@ -796,6 +807,7 @@ with tab_alca:
     st.markdown("### Gestão ALCA")
     edited_alca = st.data_editor(
         st.session_state.alca_db,
+        column_order=cols_tct_base,
         column_config={
             "ID": st.column_config.NumberColumn("ID", disabled=True),
             "Fase": st.column_config.SelectboxColumn("Fase", options=FASES_ATUAIS),
@@ -838,6 +850,7 @@ with tab_famo:
     st.markdown("### Gestão FAMO")
     edited_famo = st.data_editor(
         st.session_state.famo_db,
+        column_order=cols_tct_base,
         column_config={
             "ID": st.column_config.NumberColumn("ID", disabled=True),
             "Fase": st.column_config.SelectboxColumn("Fase", options=FASES_ATUAIS),
@@ -959,6 +972,7 @@ with tab_financeiro:
         
         edited_fin = st.data_editor(
             df_fin,
+            column_order=["Cliente", "Projeto", "Fase", "Valor Estimado", "% DBS", "Valor da % DBS", "Inter", "% Inter", "Valor da % Inter"],
             column_config={
                 "Fase": st.column_config.SelectboxColumn("Fase", options=FASES_ATUAIS),
                 "Valor Estimado": st.column_config.NumberColumn("Valor Estimado", format="%.0f €", step=1000.0),
@@ -1055,6 +1069,7 @@ with tab_pagamentos:
             df_proj_inst["IVA IF"] = df_proj_inst["IVA IF"].astype(str).replace("nan", "").replace("None", "")
             edited_inst = st.data_editor(
                 df_proj_inst,
+                column_order=cols_inst,
                 column_config={ "Projeto": st.column_config.TextColumn("Projeto", disabled=True), "Mês": st.column_config.TextColumn("Mês", disabled=True), "Mensalidade (€)": st.column_config.NumberColumn("Mensalidade s/ IVA", format="%.2f €"), "IVA (%)": st.column_config.NumberColumn("IVA (%)", format="%.1f %%"), "Valor com IVA (€)": st.column_config.NumberColumn("Valor c/ IVA", format="%.2f €", disabled=True), "IVA IF": st.column_config.TextColumn("Refª Fatura (IVA IF)"), "Estado": st.column_config.SelectboxColumn("Status de Envio da Fatura", options=ESTADOS_PAGAMENTO) },
                 hide_index=True, use_container_width=True, key=f"edit_inst_{proj_pag}"
             )
@@ -1110,6 +1125,7 @@ with tab_todo:
     if not st.session_state.todo_db.empty:
         edited_todo = st.data_editor(
             st.session_state.todo_db,
+            column_order=cols_todo_todas,
             column_config={ "Tarefa": st.column_config.TextColumn("Tarefa", width="medium"), "Próximos passos": st.column_config.TextColumn("Próximos passos", width="large"), "Follow up": st.column_config.DateColumn("Follow up") },
             use_container_width=True, hide_index=True, num_rows="dynamic", key="todo_editor_grid"
         )
@@ -1167,6 +1183,7 @@ with tab_objectivos:
 
     edited_kpi = st.data_editor(
         df_kpi_display,
+        column_order=cols_kpi,
         column_config={ "Métricas Globais": st.column_config.TextColumn("Métricas Globais", disabled=True), "Valor Atual": st.column_config.TextColumn("Valor Atual", disabled=True), "KPIS 2027": st.column_config.TextColumn("KPIS 2027", disabled=True), "Objetivo (Editável)": st.column_config.TextColumn("Objetivo (Editável)") },
         use_container_width=True, hide_index=True, key="kpi_editor"
     )
