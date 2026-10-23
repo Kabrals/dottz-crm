@@ -405,7 +405,8 @@ with tab_captura:
         
         if st.form_submit_button("Criar Oportunidade"):
             if novo_cliente and novo_projeto:
-                novo_id = 1 if st.session_state.leads_db.empty else int(pd.to_numeric(st.session_state.leads_db["ID"], errors="coerce").fillna(0).max()) + 1
+                safe_ids = pd.to_numeric(st.session_state.leads_db["ID"], errors="coerce").dropna()
+                novo_id = 1 if safe_ids.empty else int(safe_ids.max()) + 1
                 nova_linha = {"ID": novo_id, "Cliente": novo_cliente, "Projeto": novo_projeto, COLUNA_ARQUITECTO: novo_arquitecto, "Fase": "⚪ Em Análise", "Valor Estimado": float(novo_valor), "Próximo Follow-up": date.today() + timedelta(days=1), "Notas": notas_iniciais}
                 st.session_state.leads_db = pd.concat([st.session_state.leads_db, pd.DataFrame([nova_linha])], ignore_index=True)
                 st.session_state.leads_db, _ = sync_financial_math(st.session_state.leads_db)
@@ -778,7 +779,8 @@ with tab_tct:
         use_container_width=True, hide_index=True, num_rows="dynamic", key="tct_editor"
     )
     if not edited_tct.equals(st.session_state.tct_db):
-        max_id = int(pd.to_numeric(st.session_state.tct_db["ID"], errors="coerce").fillna(0).max())
+        temp_ids = pd.to_numeric(st.session_state.tct_db["ID"], errors="coerce").dropna()
+        max_id = int(temp_ids.max()) if not temp_ids.empty else 0
         for idx in edited_tct.index:
             if pd.isna(edited_tct.at[idx, "ID"]) or str(edited_tct.at[idx, "ID"]).strip() == "":
                 max_id += 1
@@ -821,7 +823,8 @@ with tab_alca:
         use_container_width=True, hide_index=True, num_rows="dynamic", key="alca_editor"
     )
     if not edited_alca.equals(st.session_state.alca_db):
-        max_id = int(pd.to_numeric(st.session_state.alca_db["ID"], errors="coerce").fillna(0).max())
+        temp_ids = pd.to_numeric(st.session_state.alca_db["ID"], errors="coerce").dropna()
+        max_id = int(temp_ids.max()) if not temp_ids.empty else 0
         for idx in edited_alca.index:
             if pd.isna(edited_alca.at[idx, "ID"]) or str(edited_alca.at[idx, "ID"]).strip() == "":
                 max_id += 1
@@ -864,7 +867,8 @@ with tab_famo:
         use_container_width=True, hide_index=True, num_rows="dynamic", key="famo_editor"
     )
     if not edited_famo.equals(st.session_state.famo_db):
-        max_id = int(pd.to_numeric(st.session_state.famo_db["ID"], errors="coerce").fillna(0).max())
+        temp_ids = pd.to_numeric(st.session_state.famo_db["ID"], errors="coerce").dropna()
+        max_id = int(temp_ids.max()) if not temp_ids.empty else 0
         for idx in edited_famo.index:
             if pd.isna(edited_famo.at[idx, "ID"]) or str(edited_famo.at[idx, "ID"]).strip() == "":
                 max_id += 1
