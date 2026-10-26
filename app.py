@@ -404,15 +404,14 @@ with tab_captura:
         notas_iniciais = st.text_area("Notas Iniciais / Enriquecimento")
         
         if st.form_submit_button("Criar Oportunidade"):
-            if novo_cliente and novo_projeto:
-                safe_ids = pd.to_numeric(st.session_state.leads_db["ID"], errors="coerce").dropna()
-                novo_id = 1 if safe_ids.empty else int(safe_ids.max()) + 1
-                nova_linha = {"ID": novo_id, "Cliente": novo_cliente, "Projeto": novo_projeto, COLUNA_ARQUITECTO: novo_arquitecto, "Fase": "⚪ Em Análise", "Valor Estimado": float(novo_valor), "Próximo Follow-up": date.today() + timedelta(days=1), "Notas": notas_iniciais}
-                st.session_state.leads_db = pd.concat([st.session_state.leads_db, pd.DataFrame([nova_linha])], ignore_index=True)
-                st.session_state.leads_db, _ = sync_financial_math(st.session_state.leads_db)
-                save_table("leads_db", st.session_state.leads_db)
-                st.toast("Oportunidade guardada no pipeline.")
-                st.rerun()
+            safe_ids = pd.to_numeric(st.session_state.leads_db["ID"], errors="coerce").dropna()
+            novo_id = 1 if safe_ids.empty else int(safe_ids.max()) + 1
+            nova_linha = {"ID": novo_id, "Cliente": novo_cliente, "Projeto": novo_projeto, COLUNA_ARQUITECTO: novo_arquitecto, "Fase": "⚪ Em Análise", "Valor Estimado": float(novo_valor), "Próximo Follow-up": date.today() + timedelta(days=1), "Notas": notas_iniciais}
+            st.session_state.leads_db = pd.concat([st.session_state.leads_db, pd.DataFrame([nova_linha])], ignore_index=True)
+            st.session_state.leads_db, _ = sync_financial_math(st.session_state.leads_db)
+            save_table("leads_db", st.session_state.leads_db)
+            st.toast("Oportunidade guardada no pipeline.")
+            st.rerun()
 
 # --- 2. PIPELINE DE NEGÓCIOS ---
 with tab_pipeline:
